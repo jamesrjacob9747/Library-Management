@@ -16,7 +16,7 @@ export default function Dashboard() {
     setError(null);
     try {
       const res = await api.get('/issuance', {
-        params: { status: 'active', limit: 100 },
+        params: { status: 'issued', limit: 100 },
       });
       setIssuances(res.data.data || []);
     } catch (err) {
@@ -36,8 +36,8 @@ export default function Dashboard() {
     const term = search.toLowerCase();
     const matchSearch =
       !term ||
-      item.member?.name?.toLowerCase().includes(term) ||
-      item.book?.title?.toLowerCase().includes(term);
+      item.member?.mem_name?.toLowerCase().includes(term) ||
+      item.book?.book_name?.toLowerCase().includes(term);
     return matchDate && matchSearch;
   });
 
@@ -49,9 +49,9 @@ export default function Dashboard() {
   const handleExportCSV = () => {
     const headers = ['Member Name', 'Book Name', 'Issued Date', 'Target Return Date', 'Days Overdue'];
     const rows = filtered.map((i) => [
-      i.member?.name,
-      i.book?.title,
-      i.issued_date,
+      i.member?.mem_name,
+      i.book?.book_name,
+      i.issuance_date,
       i.target_return_date,
       getDaysOverdue(i.target_return_date),
     ]);
@@ -68,7 +68,7 @@ export default function Dashboard() {
   return (
     <div style={styles.page}>
       <div style={styles.header}>
-        <h1 style={styles.title}>📚 Library Management System</h1>
+        <h1 style={styles.title}>Library Management System</h1>
         <p style={styles.subtitle}>Pending Book Returns Dashboard</p>
       </div>
 
@@ -95,8 +95,8 @@ export default function Dashboard() {
         <div style={styles.controlGroup}>
           <label style={styles.label}>&nbsp;</label>
           <div style={styles.btnRow}>
-            <button onClick={fetchPending} style={styles.btnPrimary}>↺ Refresh</button>
-            <button onClick={handleExportCSV} style={styles.btnSecondary}>⬇ Export CSV</button>
+            <button onClick={fetchPending} style={styles.btnPrimary}>Refresh</button>
+            <button onClick={handleExportCSV} style={styles.btnSecondary}>Export CSV</button>
           </div>
         </div>
       </div>
@@ -131,7 +131,7 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr>
+                <tr key="empty-state">
                   <td colSpan={7} style={styles.empty}>No pending returns found.</td>
                 </tr>
               ) : (
@@ -145,11 +145,11 @@ export default function Dashboard() {
                     : styles.tr;
 
                   return (
-                    <tr key={item.id} style={rowStyle}>
+                    <tr key={item.issuance_id} style={rowStyle}>
                       <td style={styles.td}>{idx + 1}</td>
-                      <td style={styles.td}>{item.member?.name || '—'}</td>
-                      <td style={{ ...styles.td, fontWeight: 500 }}>{item.book?.title || '—'}</td>
-                      <td style={styles.td}>{item.issued_date}</td>
+                      <td style={styles.td}>{item.member?.mem_name || '—'}</td>
+                      <td style={{ ...styles.td, fontWeight: 500 }}>{item.book?.book_name || '—'}</td>
+                      <td style={styles.td}>{item.issuance_date}</td>
                       <td style={styles.td}>{item.target_return_date}</td>
                       <td style={{ ...styles.td, color: overdue > 0 ? '#dc2626' : '#374151', fontWeight: overdue > 0 ? 700 : 400 }}>
                         {overdue > 0 ? `${overdue} days` : '—'}

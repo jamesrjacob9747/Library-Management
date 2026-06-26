@@ -50,7 +50,7 @@ library-management/
 
 ---
 
-## ⚡ Quick Start
+##  Quick Start
 
 ### 1. Prerequisites
 - Node.js v18+
@@ -107,7 +107,7 @@ npm run dev:frontend   # http://localhost:5173
 
 ---
 
-## 🔑 Authentication
+##  Authentication
 
 All API calls require the `X-API-Key` header:
 
@@ -221,7 +221,7 @@ Open `http://localhost:5173` to view the **Pending Returns Dashboard**:
 
 ---
 
-## 📦 Tech Stack
+##  Tech Stack
 
 | Layer | Technology |
 |-------|-----------|

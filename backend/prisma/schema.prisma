@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model member {
+  mem_id     Int          @id @default(autoincrement())
+  mem_name   String       @db.VarChar(150)
+  mem_email  String       @unique @db.VarChar(255)
+  mem_phone  String?      @db.VarChar(20)
+  membership membership[]
+  issuance   issuance[]
+}
+
+model membership {
+  membership_id Int    @id @default(autoincrement())
+  member_id     Int    @unique
+  status        String @db.VarChar(50)
+  member        member @relation(fields: [member_id], references: [mem_id], onDelete: NoAction)
+}
+
+model category {
+  cat_id       Int    @id @default(autoincrement())
+  cat_name     String @db.VarChar(150)
+  sub_cat_name String @db.VarChar(150)
+  books        book[]
+}
+
+model collection {
+  collection_id   Int    @id @default(autoincrement())
+  collection_name String @db.VarChar(150)
+  books           book[]
+}
+
+model book {
+  book_id            Int        @id @default(autoincrement())
+  book_name          String     @db.VarChar(255)
+  book_publisher     String?    @db.VarChar(150)
+  book_cat_id        Int
+  book_collection_id Int
+  book_launch_date   DateTime?  @db.Date
+  category           category   @relation(fields: [book_cat_id], references: [cat_id], onDelete: NoAction)
+  collection         collection @relation(fields: [book_collection_id], references: [collection_id], onDelete: NoAction)
+  issuance           issuance[]
+}
+
+model issuance {
+  issuance_id        Int      @id @default(autoincrement())
+  issuance_member    Int
+  book_id            Int
+  issuance_date      DateTime @db.Date
+  target_return_date DateTime @db.Date
+  issuance_status    String   @db.VarChar(50)
+  issued_by          String?  @db.VarChar(150)
+  member             member   @relation(fields: [issuance_member], references: [mem_id], onDelete: NoAction)
+  book               book     @relation(fields: [book_id], references: [book_id], onDelete: NoAction)
+}

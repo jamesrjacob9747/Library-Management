@@ -1,155 +1,107 @@
 'use strict';
 
-const { Op } = require('sequelize');
-const Issuance = require('../models/Issuance');
-const Member = require('../models/Member');
-const Book = require('../models/Book');
+const prisma = require('../config/prisma');
 const { getPagination, paginatedResponse } = require('../utils/pagination');
 
-const memberAttrs = ['id', 'name', 'email', 'phone'];
-const bookAttrs = ['id', 'title', 'author', 'isbn'];
+const includeRelations = {
+  member: { select: { mem_id: true, mem_name: true, mem_email: true, mem_phone: true } },
+  book: { select: { book_id: true, book_name: true, book_publisher: true, category: true, collection: true } },
+};
 
 // GET /issuance/:id
 const getIssuanceById = async (req, res, next) => {
   try {
-    const issuance = await Issuance.findByPk(req.params.id, {
-      include: [
-        { model: Member, as: 'member', attributes: memberAttrs },
-        { model: Book, as: 'book', attributes: bookAttrs },
-      ],
+    const issuance = await prisma.issuance.findUnique({
+      where: { issuance_id: parseInt(req.params.id) },
+      include: includeRelations,
     });
-    if (!issuance) {
-      return res.status(404).json({ success: false, message: 'Issuance record not found.' });
-    }
+    if (!issuance) return res.status(404).json({ success: false, message: 'Issuance not found.' });
     res.json({ success: true, data: issuance });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// GET /issuance
-// Query params: status (active|returned|overdue), member_id, book_id, date (target_return_date)
+// GET /issuance  (?status=issued|returned|overdue, ?member_id=, ?book_id=, ?date=YYYY-MM-DD)
 const getAllIssuances = async (req, res, next) => {
   try {
     const { page, limit, offset } = getPagination(req.query);
     const { status, member_id, book_id, date } = req.query;
 
     const where = {};
+    if (member_id) where.issuance_member = parseInt(member_id);
+    if (book_id) where.book_id = parseInt(book_id);
+    if (status) where.issuance_status = status;
 
-    if (member_id) where.member_id = member_id;
-    if (book_id) where.book_id = book_id;
-
-    if (status === 'returned') {
-      where.actual_return_date = { [Op.ne]: null };
-    } else if (status === 'active') {
-      where.actual_return_date = null;
-    } else if (status === 'overdue') {
-      where.actual_return_date = null;
-      where.target_return_date = { [Op.lt]: new Date() };
-    }
-
-    // Filter by a specific target return date (for dashboard)
+    // For dashboard: pending returns on or before a given date
     if (date) {
-      where.target_return_date = date;
-      where.actual_return_date = null;
+      where.target_return_date = { lte: new Date(date) };
+      where.issuance_status = { not: 'returned' };
     }
 
-    const { count, rows } = await Issuance.findAndCountAll({
-      where,
-      include: [
-        { model: Member, as: 'member', attributes: memberAttrs },
-        { model: Book, as: 'book', attributes: bookAttrs },
-      ],
-      limit,
-      offset,
-      order: [['target_return_date', 'ASC']],
-    });
+    const [total, issuances] = await Promise.all([
+      prisma.issuance.count({ where }),
+      prisma.issuance.findMany({
+        where,
+        include: includeRelations,
+        skip: offset,
+        take: limit,
+        orderBy: { target_return_date: 'asc' },
+      }),
+    ]);
 
-    res.json(paginatedResponse(rows, count, page, limit));
-  } catch (err) {
-    next(err);
-  }
+    res.json(paginatedResponse(issuances, total, page, limit));
+  } catch (err) { next(err); }
 };
 
 // POST /issuance
 const createIssuance = async (req, res, next) => {
   try {
-    const { member_id, book_id, target_return_date, issued_date } = req.body;
+    const { book_id, issuance_member, issued_by, target_return_date, issuance_date } = req.body;
+    if (!book_id || !issuance_member || !target_return_date)
+      return res.status(400).json({ success: false, message: 'book_id, issuance_member, and target_return_date are required.' });
 
-    if (!member_id || !book_id || !target_return_date) {
-      return res.status(400).json({
-        success: false,
-        message: 'member_id, book_id, and target_return_date are required.',
-      });
-    }
-
-    // Validate member and book exist
     const [member, book] = await Promise.all([
-      Member.findByPk(member_id),
-      Book.findByPk(book_id),
+      prisma.member.findUnique({ where: { mem_id: parseInt(issuance_member) } }),
+      prisma.book.findUnique({ where: { book_id: parseInt(book_id) } }),
     ]);
 
     if (!member) return res.status(404).json({ success: false, message: 'Member not found.' });
     if (!book) return res.status(404).json({ success: false, message: 'Book not found.' });
-    if (book.copies_available < 1) {
-      return res.status(400).json({ success: false, message: 'No copies available for this book.' });
-    }
 
-    // Decrement available copies
-    await book.update({ copies_available: book.copies_available - 1 });
-
-    const issuance = await Issuance.create({
-      member_id,
-      book_id,
-      issued_date: issued_date || new Date(),
-      target_return_date,
+    const issuance = await prisma.issuance.create({
+      data: {
+        book_id: parseInt(book_id),
+        issuance_member: parseInt(issuance_member),
+        issued_by,
+        issuance_date: issuance_date ? new Date(issuance_date) : new Date(),
+        target_return_date: new Date(target_return_date),
+        issuance_status: 'issued',
+      },
+      include: includeRelations,
     });
-
-    const result = await Issuance.findByPk(issuance.id, {
-      include: [
-        { model: Member, as: 'member', attributes: memberAttrs },
-        { model: Book, as: 'book', attributes: bookAttrs },
-      ],
-    });
-
-    res.status(201).json({ success: true, data: result });
-  } catch (err) {
-    next(err);
-  }
+    res.status(201).json({ success: true, data: issuance });
+  } catch (err) { next(err); }
 };
 
 // PUT /issuance/:id
 const updateIssuance = async (req, res, next) => {
   try {
-    const issuance = await Issuance.findByPk(req.params.id, {
-      include: [{ model: Book, as: 'book' }],
+    const id = parseInt(req.params.id);
+    const exists = await prisma.issuance.findUnique({ where: { issuance_id: id } });
+    if (!exists) return res.status(404).json({ success: false, message: 'Issuance not found.' });
+
+    const { issuance_status, target_return_date, issued_by } = req.body;
+
+    const issuance = await prisma.issuance.update({
+      where: { issuance_id: id },
+      data: {
+        issuance_status,
+        target_return_date: target_return_date ? new Date(target_return_date) : undefined,
+        issued_by,
+      },
+      include: includeRelations,
     });
-    if (!issuance) {
-      return res.status(404).json({ success: false, message: 'Issuance record not found.' });
-    }
-
-    const { actual_return_date, target_return_date } = req.body;
-
-    // If marking as returned and wasn't returned before, increment copies
-    if (actual_return_date && !issuance.actual_return_date) {
-      await issuance.book.update({
-        copies_available: issuance.book.copies_available + 1,
-      });
-    }
-
-    await issuance.update({ actual_return_date, target_return_date });
-
-    const result = await Issuance.findByPk(issuance.id, {
-      include: [
-        { model: Member, as: 'member', attributes: memberAttrs },
-        { model: Book, as: 'book', attributes: bookAttrs },
-      ],
-    });
-
-    res.json({ success: true, data: result });
-  } catch (err) {
-    next(err);
-  }
+    res.json({ success: true, data: issuance });
+  } catch (err) { next(err); }
 };
 
 module.exports = { getIssuanceById, getAllIssuances, createIssuance, updateIssuance };
