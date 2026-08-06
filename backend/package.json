@@ -7,7 +7,8 @@
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "migrate": "node src/migrations/run.js",
-    "seed": "node src/seeds/run.js"
+    "seed": "node src/seeds/run.js",
+    "test": "jest --runInBand --detectOpenHandles"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
@@ -23,7 +24,9 @@
     "uuid": "^9.0.0"
   },
   "devDependencies": {
+    "jest": "^30.4.2",
     "nodemon": "^3.0.2",
-    "prisma": "^7.8.0"
+    "prisma": "^7.8.0",
+    "supertest": "^7.2.2"
   }
 }
