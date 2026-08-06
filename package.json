@@ -9,7 +9,8 @@
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
     "migrate": "cd backend && npm run migrate",
-    "seed": "cd backend && npm run seed"
+    "seed": "cd backend && npm run seed",
+    "test": "cd backend && npm test"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

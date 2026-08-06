@@ -10,10 +10,12 @@ const getBookById = async (req, res, next) => {
       where: { book_id: parseInt(req.params.id) },
       include: { category: true, collection: true },
     });
+    console.log("Fetched Book:", book);
     if (!book) return res.status(404).json({ success: false, message: 'Book not found.' });
     res.json({ success: true, data: book });
   } catch (err) { next(err); }
 };
+
 
 // GET /book
 const getAllBooks = async (req, res, next) => {
