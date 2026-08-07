@@ -139,7 +139,7 @@ echo "[init] All services running -- http://localhost"
 wait
 ENTRYPOINT_SCRIPT
 
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 EXPOSE 80
 VOLUME ["/var/lib/postgresql/data"]
