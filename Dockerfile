@@ -7,7 +7,6 @@ FROM node:20-alpine AS frontend-build
 WORKDIR /app
 
 COPY frontend/package.json frontend/package-lock.json* ./
-
 RUN npm ci
 
 COPY frontend/ .
@@ -28,14 +27,13 @@ FROM node:20-alpine AS backend-build
 WORKDIR /app
 
 COPY backend/package.json backend/package-lock.json* ./
-
 RUN npm ci
 
 COPY backend/prisma ./prisma
 COPY backend/prisma.config.js ./
 
-# Dummy DATABASE_URL is only required during image build
-# for Prisma client generation.
+# Only used while building the Prisma client.
+# The real DATABASE_URL is supplied at runtime.
 ENV DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder"
 
 RUN npx prisma generate --schema=./prisma/schema.prisma
@@ -48,17 +46,17 @@ COPY backend/ .
 FROM postgres:16-alpine
 
 RUN apk add --no-cache nodejs npm nginx tini su-exec \
-  && mkdir -p /run/nginx /var/log/nginx
+    && mkdir -p /run/nginx /var/log/nginx
 
 
-# ── Copy backend ───────────────────────────────────────────────────
+# ── Backend ─────────────────────────────────────────────────────────
 
 WORKDIR /app/backend
 
 COPY --from=backend-build /app /app/backend
 
 
-# ── Copy frontend build ────────────────────────────────────────────
+# ── Frontend ────────────────────────────────────────────────────────
 
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
 
@@ -66,7 +64,6 @@ COPY --from=frontend-build /app/dist /usr/share/nginx/html
 # ── Nginx configuration ────────────────────────────────────────────
 
 COPY <<'NGINX_CONF' /etc/nginx/http.d/default.conf
-
 server {
     listen 80;
     server_name _;
@@ -75,7 +72,6 @@ server {
     index index.html;
 
     gzip on;
-
     gzip_types
         text/plain
         text/css
@@ -86,11 +82,10 @@ server {
         application/xml+rss
         text/javascript;
 
-    # ── Backend API ────────────────────────────────────────────────
+    # ── API ─────────────────────────────────────────────────────────
 
     location /api/ {
         proxy_pass http://127.0.0.1:3001/api/;
-
         proxy_http_version 1.1;
 
         proxy_set_header Host $host;
@@ -101,7 +96,7 @@ server {
         proxy_read_timeout 30s;
     }
 
-    # ── Backend health check ───────────────────────────────────────
+    # ── Health check ───────────────────────────────────────────────
 
     location /health {
         proxy_pass http://127.0.0.1:3001/health;
@@ -120,36 +115,29 @@ server {
         add_header Cache-Control "public, immutable";
     }
 }
-
 NGINX_CONF
 
 
 # ── Entrypoint script ──────────────────────────────────────────────
 
 COPY <<'ENTRYPOINT_SCRIPT' /entrypoint.sh
-
 #!/bin/sh
-
 set -e
-
-
-# ── Default database variables ─────────────────────────────────────
 
 : "${DB_USER:=postgres}"
 : "${DB_PASSWORD:=}"
 : "${DB_NAME:=library_management}"
 
-
 PGDATA="/var/lib/postgresql/data"
-
 export PGDATA
 
 
 # ── Database configuration ─────────────────────────────────────────
 
-# If DATABASE_URL is provided, use the external RDS PostgreSQL database.
+# If DATABASE_URL is provided, use the external PostgreSQL database
+# such as AWS RDS.
 #
-# Otherwise, start the PostgreSQL server inside this container.
+# If DATABASE_URL is not provided, use PostgreSQL inside this container.
 
 if [ -n "${DATABASE_URL:-}" ]; then
 
@@ -168,7 +156,7 @@ else
     export DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}"
 
 
-    # ── Initialize local PostgreSQL if fresh volume ───────────────
+    # ── Initialize local PostgreSQL if needed ─────────────────────
 
     if [ ! -s "$PGDATA/PG_VERSION" ]; then
 
@@ -194,20 +182,19 @@ else
         -o "-k /run/postgresql"
 
 
-    # ── Create database if needed ─────────────────────────────────
+    # ── Create local database if needed ───────────────────────────
 
     su-exec postgres psql -tc \
         "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" \
         | grep -q 1 \
         || su-exec postgres createdb "$DB_NAME"
 
-
     echo "[init] Local database '${DB_NAME}' ready."
 
 fi
 
 
-# ── Push Prisma schema ─────────────────────────────────────────────
+# ── Prisma schema ──────────────────────────────────────────────────
 
 echo "[init] Checking Prisma schema..."
 
@@ -249,7 +236,7 @@ nginx -g "daemon off;" &
 NGINX_PID=$!
 
 
-# ── Graceful shutdown handler ─────────────────────────────────────
+# ── Graceful shutdown ─────────────────────────────────────────────
 
 cleanup() {
 
@@ -259,10 +246,7 @@ cleanup() {
 
     kill "$NODE_PID" 2>/dev/null || true
 
-
-    # Only stop PostgreSQL if this container is using
-    # the internal PostgreSQL database.
-
+    # Only stop PostgreSQL if we started the local database.
     if [ "$USING_EXTERNAL_DB" = "false" ]; then
 
         su-exec postgres \
@@ -277,26 +261,22 @@ cleanup() {
     exit 0
 }
 
-
 trap cleanup SIGTERM SIGINT
 
-
-# ── All services running ──────────────────────────────────────────
 
 echo "[init] All services running -- http://localhost"
 
 wait
-
 ENTRYPOINT_SCRIPT
 
 
-# ── Normalize line endings and make entrypoint executable ──────────
+# ── Normalize line endings and permissions ──────────────────────────
 
 RUN sed -i 's/\r$//' /entrypoint.sh \
-  && chmod +x /entrypoint.sh
+    && chmod +x /entrypoint.sh
 
 
-# ── Container configuration ───────────────────────────────────────
+# ── Container configuration ────────────────────────────────────────
 
 EXPOSE 80
 
