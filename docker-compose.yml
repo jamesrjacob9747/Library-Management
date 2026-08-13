@@ -10,8 +10,9 @@ services:
     restart: unless-stopped
     environment:
       DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_PASSWORD: ${DB_PASSWORD:-}
       DB_NAME: ${DB_NAME:-library_management}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       API_KEY: ${API_KEY:?API_KEY is required}
       SEED_DB: ${SEED_DB:-false}
     ports:
