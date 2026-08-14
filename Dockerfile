@@ -32,8 +32,8 @@ RUN npm ci
 COPY backend/prisma ./prisma
 COPY backend/prisma.config.js ./
 
-# Only used while building the Prisma client.
-# The real DATABASE_URL is supplied at runtime.
+# Prisma generate only needs a syntactically valid DATABASE_URL
+# during image build. The real DATABASE_URL is supplied at runtime.
 ENV DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder"
 
 RUN npx prisma generate --schema=./prisma/schema.prisma
@@ -48,20 +48,16 @@ FROM postgres:16-alpine
 RUN apk add --no-cache nodejs npm nginx tini su-exec \
     && mkdir -p /run/nginx /var/log/nginx
 
-
-# ── Backend ─────────────────────────────────────────────────────────
-
+# Copy backend including node_modules and Prisma CLI
 WORKDIR /app/backend
 
 COPY --from=backend-build /app /app/backend
 
-
-# ── Frontend ────────────────────────────────────────────────────────
-
+# Copy frontend build to nginx
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
 
 
-# ── Nginx configuration ────────────────────────────────────────────
+# ── Nginx configuration ─────────────────────────────────────────────
 
 COPY <<'NGINX_CONF' /etc/nginx/http.d/default.conf
 server {
@@ -72,17 +68,8 @@ server {
     index index.html;
 
     gzip on;
-    gzip_types
-        text/plain
-        text/css
-        application/json
-        application/javascript
-        text/xml
-        application/xml
-        application/xml+rss
-        text/javascript;
-
-    # ── API ─────────────────────────────────────────────────────────
+    gzip_types text/plain text/css application/json application/javascript
+               text/xml application/xml application/xml+rss text/javascript;
 
     location /api/ {
         proxy_pass http://127.0.0.1:3001/api/;
@@ -96,19 +83,13 @@ server {
         proxy_read_timeout 30s;
     }
 
-    # ── Health check ───────────────────────────────────────────────
-
     location /health {
         proxy_pass http://127.0.0.1:3001/health;
     }
 
-    # ── React frontend ────────────────────────────────────────────
-
     location / {
         try_files $uri $uri/ /index.html;
     }
-
-    # ── Static assets ──────────────────────────────────────────────
 
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
         expires 1y;
@@ -118,7 +99,7 @@ server {
 NGINX_CONF
 
 
-# ── Entrypoint script ──────────────────────────────────────────────
+# ── Entrypoint script ───────────────────────────────────────────────
 
 COPY <<'ENTRYPOINT_SCRIPT' /entrypoint.sh
 #!/bin/sh
@@ -132,34 +113,21 @@ PGDATA="/var/lib/postgresql/data"
 export PGDATA
 
 
-# ── Database configuration ─────────────────────────────────────────
-
-# If DATABASE_URL is provided, use the external PostgreSQL database
-# such as AWS RDS.
-#
-# If DATABASE_URL is not provided, use PostgreSQL inside this container.
+# ── Use RDS when DATABASE_URL is provided ───────────────────────────
 
 if [ -n "${DATABASE_URL:-}" ]; then
 
     echo "[init] Using external PostgreSQL database"
 
-    USING_EXTERNAL_DB=true
-
 else
 
-    echo "[init] Using PostgreSQL inside container"
-
-    USING_EXTERNAL_DB=false
+    # ── Local PostgreSQL fallback ───────────────────────────────────
 
     : "${DB_PASSWORD:?DB_PASSWORD is required}"
 
     export DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}"
 
-
-    # ── Initialize local PostgreSQL if needed ─────────────────────
-
     if [ ! -s "$PGDATA/PG_VERSION" ]; then
-
         echo "[init] Creating PostgreSQL data directory..."
 
         su-exec postgres initdb -D "$PGDATA"
@@ -167,22 +135,14 @@ else
         sed -i \
             "s/#listen_addresses = 'localhost'/listen_addresses = '127.0.0.1'/" \
             "$PGDATA/postgresql.conf"
-
     fi
-
-
-    # ── Start local PostgreSQL ────────────────────────────────────
 
     echo "[init] Starting local PostgreSQL..."
 
-    su-exec postgres \
-        pg_ctl \
+    su-exec postgres pg_ctl \
         -D "$PGDATA" \
         -w start \
         -o "-k /run/postgresql"
-
-
-    # ── Create local database if needed ───────────────────────────
 
     su-exec postgres psql -tc \
         "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" \
@@ -194,7 +154,7 @@ else
 fi
 
 
-# ── Prisma schema ──────────────────────────────────────────────────
+# ── Push Prisma schema ──────────────────────────────────────────────
 
 echo "[init] Checking Prisma schema..."
 
@@ -205,7 +165,7 @@ npx prisma db push --schema=./prisma/schema.prisma
 
 # ── Optional database seed ─────────────────────────────────────────
 
-if [ "${SEED_DB}" = "true" ]; then
+if [ "${SEED_DB:-false}" = "true" ]; then
 
     echo "[init] Seeding database..."
 
@@ -214,7 +174,7 @@ if [ "${SEED_DB}" = "true" ]; then
 fi
 
 
-# ── Start backend ──────────────────────────────────────────────────
+# ── Start backend ───────────────────────────────────────────────────
 
 echo "[init] Starting backend on :3001..."
 
@@ -227,7 +187,7 @@ node src/app.js &
 NODE_PID=$!
 
 
-# ── Start Nginx ────────────────────────────────────────────────────
+# ── Start Nginx ─────────────────────────────────────────────────────
 
 echo "[init] Starting Nginx on :80..."
 
@@ -236,7 +196,7 @@ nginx -g "daemon off;" &
 NGINX_PID=$!
 
 
-# ── Graceful shutdown ─────────────────────────────────────────────
+# ── Graceful shutdown ──────────────────────────────────────────────
 
 cleanup() {
 
@@ -246,16 +206,12 @@ cleanup() {
 
     kill "$NODE_PID" 2>/dev/null || true
 
-    # Only stop PostgreSQL if we started the local database.
-    if [ "$USING_EXTERNAL_DB" = "false" ]; then
-
-        su-exec postgres \
-            pg_ctl \
+    if [ -s "$PGDATA/PG_VERSION" ]; then
+        su-exec postgres pg_ctl \
             -D "$PGDATA" \
             stop \
             -m fast \
             2>/dev/null || true
-
     fi
 
     exit 0
@@ -270,19 +226,17 @@ wait
 ENTRYPOINT_SCRIPT
 
 
-# ── Normalize line endings and permissions ──────────────────────────
+# Normalize Windows line endings and make entrypoint executable
 
 RUN sed -i 's/\r$//' /entrypoint.sh \
     && chmod +x /entrypoint.sh
 
-
-# ── Container configuration ────────────────────────────────────────
 
 EXPOSE 80
 
 VOLUME ["/var/lib/postgresql/data"]
 
 
-# tini handles zombie reaping and signal forwarding
+# tini handles signal forwarding and zombie processes
 
 ENTRYPOINT ["/sbin/tini", "--", "/entrypoint.sh"]
