@@ -21,7 +21,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
@@ -34,6 +34,8 @@ jobs:
         run: npx prisma generate
 
       - name: Create Lambda ZIP
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           rm -rf lambda-package lambda.zip
           mkdir lambda-package
@@ -50,9 +52,16 @@ jobs:
 
           npx prisma generate
 
+          rm -rf node_modules/.cache
+
           cd ..
 
           zip -r lambda.zip lambda-package
+
+      - name: Show ZIP size
+        run: |
+          ls -lh lambda.zip
+          du -h lambda.zip
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
