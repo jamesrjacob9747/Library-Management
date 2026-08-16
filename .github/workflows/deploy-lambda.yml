@@ -14,11 +14,9 @@ jobs:
         working-directory: backend
 
     steps:
-      # 1. Checkout repository
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -26,17 +24,23 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
-      # 3. Install backend dependencies
       - name: Install dependencies
         run: npm ci
 
-      # 4. Generate Prisma Client
       - name: Generate Prisma Client
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: npx prisma generate
 
-      # 5. Create Lambda deployment ZIP
+      # Remove Jest, Nodemon, Prisma CLI, Supertest, etc.
+      - name: Remove development dependencies
+        run: npm prune --omit=dev
+
+      - name: Check deployment size
+        run: |
+          echo "node_modules size:"
+          du -sh node_modules
+
       - name: Create Lambda ZIP
         run: |
           zip -r ../lambda.zip \
@@ -45,9 +49,14 @@ jobs:
             package.json \
             package-lock.json \
             prisma \
-            prisma.config.js
+            prisma.config.js \
+            -x "node_modules/.cache/*"
 
-      # 6. Configure AWS credentials
+      - name: Check ZIP size
+        working-directory: .
+        run: |
+          ls -lh lambda.zip
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -55,10 +64,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      # 7. Deploy ZIP to Lambda
       - name: Deploy to Lambda
+        working-directory: .
         run: |
           aws lambda update-function-code \
             --function-name library-management-backend \
-            --zip-file fileb://../lambda.zip \
+            --zip-file fileb://lambda.zip \
             --publish
