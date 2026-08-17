@@ -28,49 +28,52 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Generate Prisma Client
       - name: Generate Prisma Client
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: npx prisma generate
 
-      - name: Remove development dependencies
-        run: npm prune --omit=dev
-
-      - name: Remove unnecessary Prisma files
-        run: |
-          rm -rf node_modules/prisma
-          rm -rf node_modules/@prisma/engines
-          rm -rf node_modules/.cache
-
-      - name: Create Lambda package
+      # Create Lambda deployment package
+      - name: Create Lambda ZIP
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           rm -rf lambda-package lambda.zip
-
           mkdir lambda-package
 
+          # Copy application files
           cp -r src lambda-package/
+          cp -r prisma lambda-package/
+          cp prisma.config.js lambda-package/
           cp package.json lambda-package/
           cp package-lock.json lambda-package/
 
-          cp -r node_modules lambda-package/
-
-      - name: Show package size
-        run: |
-          echo "Lambda package size:"
-          du -sh lambda-package
-
-          echo "Node modules size:"
-          du -sh lambda-package/node_modules
-
-      - name: Create Lambda ZIP
-        run: |
+          # Install production dependencies inside package
           cd lambda-package
-          zip -r ../lambda.zip . -q
 
+          npm ci --omit=dev
+
+          # Generate Prisma Client
+          npx prisma generate
+
+          # Remove unnecessary cache
+          rm -rf node_modules/.cache
+
+          cd ..
+
+          # Create ZIP
+          zip -r lambda.zip lambda-package \
+            -x "lambda-package/node_modules/.cache/*"
+
+      # Show package size
       - name: Show ZIP size
         run: |
+          echo "Lambda ZIP size:"
           ls -lh lambda.zip
+          du -h lambda.zip
 
+      # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -78,11 +81,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # Upload ZIP to S3
       - name: Upload Lambda ZIP to S3
         run: |
           aws s3 cp lambda.zip \
             s3://library-management-lambda-deploy-810100779511/lambda.zip
 
+      # Update Lambda code and configuration
       - name: Deploy to Lambda
         run: |
           aws lambda update-function-code \
@@ -90,11 +95,30 @@ jobs:
             --s3-bucket library-management-lambda-deploy-810100779511 \
             --s3-key lambda.zip
 
+          aws lambda update-function-configuration \
+            --function-name library-management-backend \
+            --runtime nodejs24.x \
+            --handler lambda-package/src/lambda.handler
+
+      # Wait until Lambda update is complete
       - name: Wait for Lambda update
         run: |
           aws lambda wait function-updated \
             --function-name library-management-backend
 
+      # Verify Lambda configuration
+      - name: Verify Lambda configuration
+        run: |
+          aws lambda get-function-configuration \
+            --function-name library-management-backend \
+            --query '{Runtime:Runtime,Handler:Handler,Status:LastUpdateStatus}' \
+            --output table
+
       - name: Deployment complete
         run: |
-          echo "Lambda deployment completed successfully!"
+          echo "========================================="
+          echo "Lambda deployment completed successfully"
+          echo "Function: library-management-backend"
+          echo "Runtime: Node.js 24.x"
+          echo "Handler: lambda-package/src/lambda.handler"
+          echo "========================================="
