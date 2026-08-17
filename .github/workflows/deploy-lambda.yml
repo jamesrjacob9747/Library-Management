@@ -33,35 +33,43 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: npx prisma generate
 
-      - name: Create Lambda ZIP
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - name: Remove development dependencies
+        run: npm prune --omit=dev
+
+      - name: Remove unnecessary Prisma files
+        run: |
+          rm -rf node_modules/prisma
+          rm -rf node_modules/@prisma/engines
+          rm -rf node_modules/.cache
+
+      - name: Create Lambda package
         run: |
           rm -rf lambda-package lambda.zip
+
           mkdir lambda-package
 
           cp -r src lambda-package/
-          cp -r prisma lambda-package/
-          cp prisma.config.js lambda-package/
           cp package.json lambda-package/
           cp package-lock.json lambda-package/
 
+          cp -r node_modules lambda-package/
+
+      - name: Show package size
+        run: |
+          echo "Lambda package size:"
+          du -sh lambda-package
+
+          echo "Node modules size:"
+          du -sh lambda-package/node_modules
+
+      - name: Create Lambda ZIP
+        run: |
           cd lambda-package
-
-          npm ci --omit=dev
-
-          npx prisma generate
-
-          rm -rf node_modules/.cache
-
-          cd ..
-
-          zip -r lambda.zip lambda-package
+          zip -r ../lambda.zip . -q
 
       - name: Show ZIP size
         run: |
           ls -lh lambda.zip
-          du -h lambda.zip
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -89,4 +97,4 @@ jobs:
 
       - name: Deployment complete
         run: |
-          echo "Lambda deployment completed successfully."
+          echo "Lambda deployment completed successfully!"
