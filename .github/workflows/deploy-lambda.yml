@@ -1,0 +1,92 @@
+name: Deploy Backend to Lambda
+
+on:
+  push:
+    branches:
+      - feature/Lambda
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npx prisma generate
+
+      - name: Create Lambda ZIP
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          rm -rf lambda-package lambda.zip
+          mkdir lambda-package
+
+          cp -r src lambda-package/
+          cp -r prisma lambda-package/
+          cp prisma.config.js lambda-package/
+          cp package.json lambda-package/
+          cp package-lock.json lambda-package/
+
+          cd lambda-package
+
+          npm ci --omit=dev --omit=optional
+
+          rm -rf node_modules/.cache
+
+          cd ..
+
+          zip -r lambda.zip lambda-package
+
+      - name: Show ZIP size
+        run: |
+          ls -lh lambda.zip
+          du -h lambda.zip
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Upload Lambda ZIP to S3
+        run: |
+          aws s3 cp lambda.zip \
+            s3://library-management-lambda-deploy-810100779511/lambda.zip
+
+      - name: Deploy to Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name library-management-backend \
+            --s3-bucket library-management-lambda-deploy-810100779511 \
+            --s3-key lambda.zip
+
+      - name: Wait for Lambda update
+        run: |
+          aws lambda wait function-updated \
+            --function-name library-management-backend
+
+      - name: Deployment complete
+        run: |
+          echo "Lambda deployment completed successfully."
