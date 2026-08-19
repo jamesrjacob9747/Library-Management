@@ -1,0 +1,124 @@
+name: Deploy Backend to Lambda
+
+on:
+  push:
+    branches:
+      - feature/Lambda
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npx prisma generate
+
+      - name: Remove development dependencies
+        run: npm prune --omit=dev
+
+      - name: Remove unnecessary Prisma files
+        run: |
+          rm -rf node_modules/prisma
+          rm -rf node_modules/@prisma/engines
+          rm -rf node_modules/.cache
+
+      - name: Create Lambda package
+        run: |
+          rm -rf lambda-package lambda.zip
+
+          mkdir lambda-package
+
+          cp -r src lambda-package/
+          cp package.json lambda-package/
+          cp package-lock.json lambda-package/
+          cp -r node_modules lambda-package/
+
+      - name: Show package size
+        run: |
+          echo "Lambda package size:"
+          du -sh lambda-package
+
+          echo "Node modules size:"
+          du -sh lambda-package/node_modules
+
+      - name: Create Lambda ZIP
+        run: |
+          cd lambda-package
+          zip -r ../lambda.zip . -q
+
+      - name: Show ZIP size
+        run: |
+          echo "Lambda ZIP size:"
+          ls -lh lambda.zip
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Upload Lambda ZIP to S3
+        run: |
+          aws s3 cp lambda.zip \
+            s3://library-management-lambda-deploy-810100779511/lambda.zip
+
+      - name: Deploy Lambda code
+        run: |
+          aws lambda update-function-code \
+            --function-name library-management-backend \
+            --s3-bucket library-management-lambda-deploy-810100779511 \
+            --s3-key lambda.zip
+
+      - name: Wait for Lambda code update
+        run: |
+          aws lambda wait function-updated \
+            --function-name library-management-backend
+
+      - name: Configure Lambda runtime and handler
+        run: |
+          aws lambda update-function-configuration \
+            --function-name library-management-backend \
+            --runtime nodejs24.x \
+            --handler src/lambda.handler
+
+      - name: Wait for Lambda configuration update
+        run: |
+          aws lambda wait function-updated \
+            --function-name library-management-backend
+
+      - name: Verify Lambda configuration
+        run: |
+          aws lambda get-function-configuration \
+            --function-name library-management-backend \
+            --query '{Runtime:Runtime,Handler:Handler,CodeSize:CodeSize,Status:LastUpdateStatus}' \
+            --output table
+
+      - name: Deployment complete
+        run: |
+          echo "========================================="
+          echo "Lambda deployment completed successfully!"
+          echo "Function: library-management-backend"
+          echo "Runtime: Node.js 24.x"
+          echo "Handler: src/lambda.handler"
+          echo "========================================="
