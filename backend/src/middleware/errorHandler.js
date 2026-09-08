@@ -1,24 +1,24 @@
 'use strict';
 
-const {
-  PrismaClientKnownRequestError,
-  PrismaClientValidationError,
-  PrismaClientInitializationError,
-  PrismaClientRustPanicError,
-} = require('@prisma/client/runtime/library');
-
 const errorHandler = (err, req, res, next) => {
-  console.error(`[ERROR] ${err.name}: ${err.message}`);
+  console.error(`[ERROR] ${err.name || 'Error'}: ${err.message || err}`);
 
+  // ─────────────────────────────────────────────────────────────
   // Prisma known request errors
-  if (err instanceof PrismaClientKnownRequestError) {
+  // ─────────────────────────────────────────────────────────────
+
+  if (err.code) {
     switch (err.code) {
       // Unique constraint violation
       case 'P2002':
         return res.status(409).json({
           success: false,
           error: 'Duplicate Entry',
-          message: `A record with the same ${err.meta?.target?.join(', ') || 'value'} already exists.`,
+          message: `A record with the same ${
+            Array.isArray(err.meta?.target)
+              ? err.meta.target.join(', ')
+              : err.meta?.target || 'value'
+          } already exists.`,
         });
 
       // Foreign key constraint violation
@@ -26,7 +26,8 @@ const errorHandler = (err, req, res, next) => {
         return res.status(400).json({
           success: false,
           error: 'Invalid Reference',
-          message: 'A referenced member, book, category, or collection does not exist.',
+          message:
+            'A referenced member, book, category, or collection does not exist.',
         });
 
       // Record not found
@@ -42,21 +43,27 @@ const errorHandler = (err, req, res, next) => {
         return res.status(400).json({
           success: false,
           error: 'Invalid Relation',
-          message: 'The operation violates a required relationship between records.',
+          message:
+            'The operation violates a required relationship between records.',
         });
 
-      // Fallback for other Prisma known errors
+      // Other Prisma known errors
       default:
-        return res.status(400).json({
-          success: false,
-          error: 'Database Error',
-          message: 'A database operation could not be completed.',
-        });
+        if (String(err.code).startsWith('P')) {
+          return res.status(400).json({
+            success: false,
+            error: 'Database Error',
+            message: 'A database operation could not be completed.',
+          });
+        }
     }
   }
 
+  // ─────────────────────────────────────────────────────────────
   // Prisma validation errors
-  if (err instanceof PrismaClientValidationError) {
+  // ─────────────────────────────────────────────────────────────
+
+  if (err.name === 'PrismaClientValidationError') {
     return res.status(400).json({
       success: false,
       error: 'Validation Error',
@@ -64,8 +71,11 @@ const errorHandler = (err, req, res, next) => {
     });
   }
 
-  // Prisma database initialization / connection errors
-  if (err instanceof PrismaClientInitializationError) {
+  // ─────────────────────────────────────────────────────────────
+  // Prisma initialization / database connection errors
+  // ─────────────────────────────────────────────────────────────
+
+  if (err.name === 'PrismaClientInitializationError') {
     return res.status(503).json({
       success: false,
       error: 'Database Connection Error',
@@ -73,8 +83,11 @@ const errorHandler = (err, req, res, next) => {
     });
   }
 
+  // ─────────────────────────────────────────────────────────────
   // Prisma engine panic
-  if (err instanceof PrismaClientRustPanicError) {
+  // ─────────────────────────────────────────────────────────────
+
+  if (err.name === 'PrismaClientRustPanicError') {
     console.error('[PRISMA PANIC]', err);
 
     return res.status(500).json({
@@ -84,13 +97,20 @@ const errorHandler = (err, req, res, next) => {
     });
   }
 
+  // ─────────────────────────────────────────────────────────────
   // Generic fallback
-  return res.status(err.status || 500).json({
+  // ─────────────────────────────────────────────────────────────
+
+  return res.status(err.status || err.statusCode || 500).json({
     success: false,
     error: err.name || 'Internal Server Error',
     message: err.message || 'An unexpected error occurred.',
   });
 };
+
+// ─────────────────────────────────────────────────────────────────
+// 404 handler
+// ─────────────────────────────────────────────────────────────────
 
 const notFoundHandler = (req, res) => {
   res.status(404).json({
