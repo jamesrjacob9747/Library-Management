@@ -1,32 +1,86 @@
 'use strict';
 
+const {
+  PrismaClientKnownRequestError,
+  PrismaClientValidationError,
+  PrismaClientInitializationError,
+  PrismaClientRustPanicError,
+} = require('@prisma/client/runtime/library');
+
 const errorHandler = (err, req, res, next) => {
   console.error(`[ERROR] ${err.name}: ${err.message}`);
 
-  // Sequelize validation errors
-  if (err.name === 'SequelizeValidationError') {
+  // Prisma known request errors
+  if (err instanceof PrismaClientKnownRequestError) {
+    switch (err.code) {
+      // Unique constraint violation
+      case 'P2002':
+        return res.status(409).json({
+          success: false,
+          error: 'Duplicate Entry',
+          message: `A record with the same ${err.meta?.target?.join(', ') || 'value'} already exists.`,
+        });
+
+      // Foreign key constraint violation
+      case 'P2003':
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid Reference',
+          message: 'A referenced member, book, category, or collection does not exist.',
+        });
+
+      // Record not found
+      case 'P2025':
+        return res.status(404).json({
+          success: false,
+          error: 'Not Found',
+          message: 'The requested record was not found.',
+        });
+
+      // Required relation violation
+      case 'P2014':
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid Relation',
+          message: 'The operation violates a required relationship between records.',
+        });
+
+      // Fallback for other Prisma known errors
+      default:
+        return res.status(400).json({
+          success: false,
+          error: 'Database Error',
+          message: 'A database operation could not be completed.',
+        });
+    }
+  }
+
+  // Prisma validation errors
+  if (err instanceof PrismaClientValidationError) {
     return res.status(400).json({
       success: false,
       error: 'Validation Error',
-      message: err.errors.map((e) => e.message).join(', '),
+      message: 'Invalid data or query parameters were provided.',
     });
   }
 
-  // Sequelize unique constraint
-  if (err.name === 'SequelizeUniqueConstraintError') {
-    return res.status(400).json({
+  // Prisma database initialization / connection errors
+  if (err instanceof PrismaClientInitializationError) {
+    return res.status(503).json({
       success: false,
-      error: 'Duplicate Entry',
-      message: `A record with this ${err.errors[0]?.path || 'value'} already exists.`,
+      error: 'Database Connection Error',
+      message: 'Unable to connect to the database.',
     });
   }
 
-  // Sequelize foreign key constraint
-  if (err.name === 'SequelizeForeignKeyConstraintError') {
-    return res.status(400).json({
+  // Prisma engine panic
+  if (err instanceof PrismaClientRustPanicError) {
+    console.error('[PRISMA PANIC]', err);
+
+    return res.status(500).json({
       success: false,
-      error: 'Invalid Reference',
-      message: 'Referenced member or book does not exist.',
+      error: 'Database Engine Error',
+      message: 'A database engine error occurred.',
     });
   }
 
@@ -46,4 +100,7 @@ const notFoundHandler = (req, res) => {
   });
 };
 
-module.exports = { errorHandler, notFoundHandler };
+module.exports = {
+  errorHandler,
+  notFoundHandler,
+};
